@@ -126,7 +126,7 @@ export class DomainPerformanceView extends ItemView {
     if (this.canvasEl) this.renderChart(this.canvasEl);
   }
 
-  onClose() {
+  async onClose(): Promise<void> {
     if (this.chart) {
       this.chart.destroy();
       this.chart = null;
@@ -300,7 +300,7 @@ export class LogTimelineView extends ItemView {
     this.renderTimeline();
   }
 
-  onClose() {
+  async onClose(): Promise<void> {
     // nothing to cleanup
   }
 

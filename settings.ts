@@ -30,8 +30,8 @@ export class LifeDomainSettingsTab extends PluginSettingTab {
         dropdown
           .addOptions({ modal: "Modal", tab: "Timeline Tab" })
           .setValue(this.plugin.settings.logUiMode ?? "modal")
-          .onChange(async (value: "modal" | "tab") => {
-            this.plugin.settings.logUiMode = value;
+          .onChange(async (value) => {
+            this.plugin.settings.logUiMode = value as "modal" | "tab";
             await this.plugin.saveSettings();
           })
       );
@@ -56,8 +56,8 @@ export class LifeDomainSettingsTab extends PluginSettingTab {
           dropdown
             .addOptions({ sum: "Sum", average: "Average", worst: "Worst Case" })
             .setValue(domain.aggregationType ?? "sum")
-            .onChange(async (value: "sum" | "average" | "worst") => {
-              domain.aggregationType = value;
+            .onChange(async (value) => {
+              domain.aggregationType = value as "sum" | "average" | "worst";
               await this.plugin.saveSettings();
             })
         )

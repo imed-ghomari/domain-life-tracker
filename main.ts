@@ -52,8 +52,8 @@ const DEFAULT_DATA: LifeDomainDataStore = {
 };
 
 export default class LifeDomainTrackerPlugin extends Plugin {
-  settings: LifeDomainSettings;
-  dataStore: LifeDomainDataStore;
+  settings!: LifeDomainSettings;
+  dataStore!: LifeDomainDataStore;
 
   async onload() {
     await this.loadSettings();
