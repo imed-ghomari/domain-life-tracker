@@ -1,6 +1,6 @@
 import { Notice, Plugin, normalizePath } from "obsidian";
 import { LifeDomainSettingsTab } from "./settings";
-import { LogDomainModal, DeleteLogsModal } from "./modals";
+import { DeleteLogsModal } from "./modals";
 import {
   DomainPerformanceView,
   LogTimelineView,
@@ -23,7 +23,6 @@ export interface LifeDomain {
 
 export interface LifeDomainSettings {
   domains: LifeDomain[];
-  logUiMode: "modal" | "tab";
 }
 
 export interface DomainLogEntry {
@@ -31,6 +30,7 @@ export interface DomainLogEntry {
   score: number;
   ts: number;
   note?: string;
+  tzOffset?: number;
 }
 
 export interface LifeDomainDataStore {
@@ -43,8 +43,7 @@ interface LifeDomainStorage {
 }
 
 export const DEFAULT_SETTINGS: LifeDomainSettings = {
-  domains: [],
-  logUiMode: "modal"
+  domains: []
 };
 
 const DEFAULT_DATA: LifeDomainDataStore = {
@@ -110,7 +109,7 @@ export default class LifeDomainTrackerPlugin extends Plugin {
     await this.saveData(payload);
   }
 
-  addLog(domainId: string, stateId: string, note?: string) {
+  addLog(domainId: string, stateId: string, note?: string, ts?: number) {
     const domain = this.settings.domains.find((d) => d.id === domainId);
     if (!domain) {
       new Notice("Domain not found.");
@@ -122,15 +121,17 @@ export default class LifeDomainTrackerPlugin extends Plugin {
       return;
     }
 
-    const dateKey = getTodayKey();
+    const tsFinal = ts ?? Date.now();
+    const dateKey = getDateKeyFromTs(tsFinal);
     if (!this.dataStore.logs[dateKey]) this.dataStore.logs[dateKey] = {};
     if (!this.dataStore.logs[dateKey][domainId]) this.dataStore.logs[dateKey][domainId] = [];
 
     this.dataStore.logs[dateKey][domainId].push({
       stateId,
       score: state.score,
-      ts: Date.now(),
-      note: note?.trim() || undefined
+      ts: tsFinal,
+      note: note?.trim() || undefined,
+      tzOffset: new Date(tsFinal).getTimezoneOffset()
     });
 
     void this.saveSettings();
@@ -203,13 +204,9 @@ export default class LifeDomainTrackerPlugin extends Plugin {
   }
 
   async openLogUi() {
-    if (this.settings.logUiMode === "tab") {
-      const leaf = this.app.workspace.getLeaf("tab");
-      await leaf.setViewState({ type: VIEW_TYPE_LOG_TIMELINE, active: true });
-      this.app.workspace.revealLeaf(leaf);
-    } else {
-      new LogDomainModal(this.app, this).open();
-    }
+    const leaf = this.app.workspace.getLeaf("tab");
+    await leaf.setViewState({ type: VIEW_TYPE_LOG_TIMELINE, active: true });
+    this.app.workspace.revealLeaf(leaf);
   }
 
   async deleteLogs(
@@ -244,6 +241,14 @@ export function normalizeKey(name: string): string {
 }
 
 export function getTodayKey(date: Date = new Date()): string {
+  const y = date.getFullYear();
+  const m = pad2(date.getMonth() + 1);
+  const d = pad2(date.getDate());
+  return `${y}-${m}-${d}`;
+}
+
+export function getDateKeyFromTs(ts: number): string {
+  const date = new Date(ts);
   const y = date.getFullYear();
   const m = pad2(date.getMonth() + 1);
   const d = pad2(date.getDate());

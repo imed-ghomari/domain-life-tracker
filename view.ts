@@ -1,12 +1,12 @@
 import { ItemView, Notice, WorkspaceLeaf } from "obsidian";
 import { Chart } from "chart.js/auto";
-import LifeDomainTrackerPlugin, { getTodayKey } from "./main";
+import LifeDomainTrackerPlugin, { getDateKeyFromTs, getTodayKey } from "./main";
 
 export const VIEW_TYPE_DOMAIN_PERFORMANCE = "life-domain-performance";
 export const VIEW_TYPE_LOG_TIMELINE = "life-domain-log-timeline";
 
 type RangeKey = "7d" | "30d" | "90d" | "365d" | "all";
-type ViewKey = "domain" | "states" | "all-domains";
+type ViewKey = "domain" | "states" | "all-domains" | "calendar-heatmap" | "state-heatmap";
 type AggregationKey = "default" | "sum" | "average" | "worst";
 
 export class DomainPerformanceView extends ItemView {
@@ -17,13 +17,16 @@ export class DomainPerformanceView extends ItemView {
   viewKey: ViewKey = "domain";
   smoothingEnabled = false;
   aggregationOverride: AggregationKey = "default";
+  stateMetric: "count" | "score" = "count";
   domainSelectEl: HTMLSelectElement | null = null;
   rangeSelectEl: HTMLSelectElement | null = null;
   viewSelectEl: HTMLSelectElement | null = null;
   statePickerEl: HTMLElement | null = null;
   canvasEl: HTMLCanvasElement | null = null;
+  customEl: HTMLElement | null = null;
   smoothingToggleEl: HTMLInputElement | null = null;
   aggregationSelectEl: HTMLSelectElement | null = null;
+  stateMetricSelectEl: HTMLSelectElement | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: LifeDomainTrackerPlugin) {
     super(leaf);
@@ -55,6 +58,7 @@ export class DomainPerformanceView extends ItemView {
     this.domainSelectEl = controls.createEl("select");
     this.rangeSelectEl = controls.createEl("select");
     this.aggregationSelectEl = controls.createEl("select");
+    this.stateMetricSelectEl = controls.createEl("select");
     const smoothingWrap = controls.createEl("label", { cls: "life-domain-smoothing" });
     this.smoothingToggleEl = smoothingWrap.createEl("input");
     this.smoothingToggleEl.type = "checkbox";
@@ -63,7 +67,9 @@ export class DomainPerformanceView extends ItemView {
     const views: { key: ViewKey; label: string }[] = [
       { key: "domain", label: "Domain score" },
       { key: "states", label: "State activity" },
-      { key: "all-domains", label: "All domains" }
+      { key: "all-domains", label: "All domains" },
+      { key: "calendar-heatmap", label: "Calendar heatmap" },
+      { key: "state-heatmap", label: "State heatmap" }
     ];
     for (const view of views) {
       this.viewSelectEl.createEl("option", { text: view.label, value: view.key });
@@ -95,7 +101,16 @@ export class DomainPerformanceView extends ItemView {
       this.aggregationSelectEl.createEl("option", { text: agg.label, value: agg.key });
     }
 
+    const metrics: { key: "count" | "score"; label: string }[] = [
+      { key: "count", label: "State count" },
+      { key: "score", label: "State score" }
+    ];
+    for (const metric of metrics) {
+      this.stateMetricSelectEl.createEl("option", { text: metric.label, value: metric.key });
+    }
+
     this.statePickerEl = contentEl.createDiv({ cls: "life-domain-state-picker" });
+    this.customEl = contentEl.createDiv({ cls: "life-domain-custom-view" });
     this.canvasEl = contentEl.createEl("canvas");
     this.domainId = domains[0].id;
 
@@ -115,6 +130,10 @@ export class DomainPerformanceView extends ItemView {
     });
     this.aggregationSelectEl.addEventListener("change", () => {
       this.aggregationOverride = (this.aggregationSelectEl?.value as AggregationKey) ?? "default";
+      if (this.canvasEl) this.renderChart(this.canvasEl);
+    });
+    this.stateMetricSelectEl.addEventListener("change", () => {
+      this.stateMetric = (this.stateMetricSelectEl?.value as "count" | "score") ?? "count";
       if (this.canvasEl) this.renderChart(this.canvasEl);
     });
     this.smoothingToggleEl.addEventListener("change", () => {
@@ -143,6 +162,9 @@ export class DomainPerformanceView extends ItemView {
     if (this.aggregationSelectEl) {
       this.aggregationSelectEl.disabled = this.viewKey === "states";
     }
+    if (this.stateMetricSelectEl) {
+      this.stateMetricSelectEl.disabled = this.viewKey !== "states";
+    }
 
     if (this.viewKey !== "states") return;
 
@@ -166,6 +188,10 @@ export class DomainPerformanceView extends ItemView {
   }
 
   private renderChart(canvas: HTMLCanvasElement) {
+    if (this.customEl) this.customEl.empty();
+    if (this.customEl) this.customEl.hide();
+    canvas.style.display = "";
+
     if (!this.domainId) {
       new Notice("No domains configured.");
       return;
@@ -182,12 +208,24 @@ export class DomainPerformanceView extends ItemView {
       datasets: { label: string; data: number[]; borderColor: string; backgroundColor: string; spanGaps: boolean }[];
     };
 
+    const aggregateIndex = buildDomainAggregateIndex(this.plugin);
+
+    if (this.viewKey === "calendar-heatmap") {
+      this.renderCalendarHeatmap(domain.id);
+      return;
+    }
+    if (this.viewKey === "state-heatmap") {
+      this.renderStateHeatmap(domain.id);
+      return;
+    }
+
     if (this.viewKey === "domain") {
       const series = buildDomainSeries(
         this.plugin,
         this.domainId,
         this.rangeKey,
-        this.aggregationOverride
+        this.aggregationOverride,
+        aggregateIndex
       );
       chartData = {
         labels: series.labels,
@@ -203,13 +241,24 @@ export class DomainPerformanceView extends ItemView {
       };
     } else if (this.viewKey === "states") {
       const selectedStateIds = getSelectedStateIds(this.statePickerEl);
-      const series = buildStateSeries(this.plugin, this.domainId, selectedStateIds, this.rangeKey);
+      const series = buildStateSeries(
+        this.plugin,
+        this.domainId,
+        selectedStateIds,
+        this.rangeKey,
+        this.stateMetric
+      );
       chartData = {
         labels: series.labels,
         datasets: series.datasets
       };
     } else {
-      const series = buildAllDomainsSeries(this.plugin, this.rangeKey, this.aggregationOverride);
+      const series = buildAllDomainsSeries(
+        this.plugin,
+        this.rangeKey,
+        this.aggregationOverride,
+        aggregateIndex
+      );
       chartData = {
         labels: series.labels,
         datasets: series.datasets
@@ -247,10 +296,84 @@ export class DomainPerformanceView extends ItemView {
           legend: { display: true }
         },
         scales: {
-          y: { beginAtZero: true }
+          x: { grid: { display: false }, border: { display: false } },
+          y: { beginAtZero: true, grid: { display: false }, border: { display: false } }
         }
       }
     });
+  }
+
+  private renderCalendarHeatmap(domainId: string) {
+    if (!this.customEl) return;
+    this.customEl.style.display = "";
+    if (this.chart) {
+      this.chart.destroy();
+      this.chart = null;
+    }
+    if (this.canvasEl) this.canvasEl.style.display = "none";
+
+    const domain = this.plugin.settings.domains.find((d) => d.id === domainId);
+    if (!domain) return;
+
+    const aggregateIndex = buildDomainAggregateIndex(this.plugin);
+    const dates = buildDateRange(this.rangeKey, Object.keys(this.plugin.dataStore.logs));
+    const values = dates.map((dateKey) => {
+      const agg = this.aggregationOverride === "default" ? domain.aggregationType : this.aggregationOverride;
+      return aggregateFromIndex(aggregateIndex, dateKey, domain.id, agg);
+    });
+    const min = Math.min(...values, 0);
+    const max = Math.max(...values, 0);
+
+    const grid = this.customEl.createDiv({ cls: "life-domain-heatmap-grid" });
+    for (let i = 0; i < dates.length; i++) {
+      const cell = grid.createDiv({ cls: "life-domain-heatmap-cell" });
+      const value = values[i];
+      const intensity = normalizeValue(value, min, max);
+      cell.style.backgroundColor = heatColor(value, intensity);
+      cell.setAttr("title", `${dates[i]} • ${value.toFixed(2)}`);
+      cell.setText(dates[i].slice(8));
+    }
+  }
+
+  private renderStateHeatmap(domainId: string) {
+    if (!this.customEl) return;
+    this.customEl.style.display = "";
+    if (this.chart) {
+      this.chart.destroy();
+      this.chart = null;
+    }
+    if (this.canvasEl) this.canvasEl.style.display = "none";
+
+    const domain = this.plugin.settings.domains.find((d) => d.id === domainId);
+    if (!domain) return;
+
+    const dates = buildDateRange(this.rangeKey, Object.keys(this.plugin.dataStore.logs));
+    const stateIndex = buildStateMetricIndex(this.plugin, domain.id, this.stateMetric);
+
+    const wrapper = this.customEl.createDiv({ cls: "life-domain-state-heatmap" });
+    const header = wrapper.createDiv({ cls: "life-domain-state-heatmap-header" });
+    header.createDiv({ text: "State" });
+    const headerRow = header.createDiv({ cls: "life-domain-state-heatmap-row" });
+    for (const dateKey of dates) {
+      const cell = headerRow.createDiv({ cls: "life-domain-heatmap-cell header" });
+      cell.setText(dateKey.slice(8));
+    }
+
+    for (const state of domain.states) {
+      const row = wrapper.createDiv({ cls: "life-domain-state-heatmap-row" });
+      row.createDiv({ text: state.name || "Unnamed", cls: "life-domain-state-label" });
+      const values = dates.map((d) => stateIndex.get(d)?.get(state.id) ?? 0);
+      const min = Math.min(...values, 0);
+      const max = Math.max(...values, 0);
+      for (let i = 0; i < dates.length; i++) {
+        const cell = row.createDiv({ cls: "life-domain-heatmap-cell" });
+        const value = values[i];
+        const intensity = normalizeValue(value, min, max);
+        cell.style.backgroundColor = heatColor(value, intensity);
+        cell.setAttr("title", `${dates[i]} • ${value.toFixed(2)}`);
+        cell.setText(value ? String(value) : "");
+      }
+    }
   }
 }
 
@@ -259,6 +382,10 @@ export class LogTimelineView extends ItemView {
   timelineEl: HTMLElement | null = null;
   statesEl: HTMLElement | null = null;
   noteInputEl: HTMLTextAreaElement | null = null;
+  timeDisplayEl: HTMLElement | null = null;
+  selectedTimeTs: number | null = null;
+  selectedDateKey: string = getTodayKey();
+  dateInputEl: HTMLInputElement | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: LifeDomainTrackerPlugin) {
     super(leaf);
@@ -284,7 +411,17 @@ export class LogTimelineView extends ItemView {
     const timelinePanel = layout.createDiv({ cls: "life-domain-log-timeline" });
     const statesPanel = layout.createDiv({ cls: "life-domain-log-states" });
 
-    timelinePanel.createEl("h4", { text: "Today's timeline" });
+    const timelineHeader = timelinePanel.createDiv({ cls: "life-domain-timeline-header" });
+    timelineHeader.createEl("h4", { text: "Timeline" });
+    this.dateInputEl = timelineHeader.createEl("input");
+    this.dateInputEl.type = "date";
+    this.dateInputEl.value = this.selectedDateKey;
+    this.dateInputEl.addEventListener("change", () => {
+      this.selectedDateKey = this.dateInputEl?.value || getTodayKey();
+      this.selectedTimeTs = null;
+      this.updateTimeDisplay();
+      this.renderTimeline();
+    });
     this.timelineEl = timelinePanel.createDiv({ cls: "life-domain-timeline-list" });
 
     const noteWrap = statesPanel.createDiv({ cls: "life-domain-note" });
@@ -293,11 +430,22 @@ export class LogTimelineView extends ItemView {
     this.noteInputEl.setAttr("rows", "2");
     this.noteInputEl.setAttr("placeholder", "Add a short note for this log...");
 
+    const timeRow = statesPanel.createDiv({ cls: "life-domain-log-time" });
+    timeRow.createEl("label", { text: "Log time" });
+    this.timeDisplayEl = timeRow.createDiv({ cls: "life-domain-log-time-value" });
+    const resetBtn = timeRow.createEl("button", { text: "Use current time" });
+    resetBtn.addEventListener("click", () => {
+      this.selectedTimeTs = null;
+      this.updateTimeDisplay();
+      this.renderTimeline();
+    });
+
     statesPanel.createEl("h4", { text: "States" });
     this.statesEl = statesPanel.createDiv({ cls: "life-domain-list" });
 
     this.renderStates();
     this.renderTimeline();
+    this.updateTimeDisplay();
   }
 
   async onClose(): Promise<void> {
@@ -330,7 +478,8 @@ export class LogTimelineView extends ItemView {
         const btn = actions.createEl("button", { text: "Log" });
         btn.addEventListener("click", () => {
           const note = this.noteInputEl?.value ?? "";
-          this.plugin.addLog(domain.id, state.id, note);
+          const logTs = this.getSelectedLogTs();
+          this.plugin.addLog(domain.id, state.id, note, logTs);
           if (this.noteInputEl) this.noteInputEl.value = "";
           this.renderTimeline();
         });
@@ -345,12 +494,8 @@ export class LogTimelineView extends ItemView {
     if (!this.timelineEl) return;
     this.timelineEl.empty();
 
-    const dateKey = getTodayKey();
-    const dayLogs = this.plugin.dataStore.logs[dateKey];
-    if (!dayLogs) {
-      this.timelineEl.createEl("p", { text: "No logs for today yet." });
-      return;
-    }
+    const dateKey = this.selectedDateKey;
+    const dayLogs = this.plugin.dataStore.logs[dateKey] ?? {};
 
     const entries: {
       ts: number;
@@ -376,28 +521,99 @@ export class LogTimelineView extends ItemView {
 
     entries.sort((a, b) => a.ts - b.ts);
 
-    let lastHour: number | null = null;
+    const byHour = new Map<number, typeof entries>();
     for (const entry of entries) {
-      const time = new Date(entry.ts);
-      const hour = time.getHours();
-      if (lastHour !== hour) {
-        const hourLabel = this.timelineEl.createDiv({ cls: "life-domain-timeline-hour" });
-        hourLabel.setText(`${hour.toString().padStart(2, "0")}:00`);
-        lastHour = hour;
+      const hour = new Date(entry.ts).getHours();
+      if (!byHour.has(hour)) byHour.set(hour, []);
+      byHour.get(hour)!.push(entry);
+    }
+
+    for (let hour = 0; hour < 24; hour++) {
+      const hourBlock = this.timelineEl.createDiv({ cls: "life-domain-timeline-hour-block" });
+      if (this.selectedTimeTs) {
+        const selHour = new Date(this.selectedTimeTs).getHours();
+        if (selHour === hour) hourBlock.addClass("is-selected");
+      }
+      hourBlock.addEventListener("click", () => {
+        const selected = dateFromKey(this.selectedDateKey);
+        selected.setHours(hour, 0, 0, 0);
+        this.selectedTimeTs = selected.getTime();
+        this.updateTimeDisplay();
+        this.renderTimeline();
+      });
+
+        const hourLabel = hourBlock.createDiv({ cls: "life-domain-timeline-hour" });
+        hourLabel.setText(formatHourLabel(hour));
+
+      const hourItems = hourBlock.createDiv({ cls: "life-domain-timeline-items" });
+      const hourEntries = byHour.get(hour) ?? [];
+      if (!hourEntries.length) {
+        hourItems.createEl("div", { text: "—", cls: "life-domain-timeline-empty" });
+        continue;
       }
 
-      const item = this.timelineEl.createDiv({ cls: "life-domain-timeline-item" });
-      const timeLabel = item.createDiv({ cls: "life-domain-timeline-time" });
-      timeLabel.setText(`${time.getHours().toString().padStart(2, "0")}:${time.getMinutes().toString().padStart(2, "0")}`);
+      for (const entry of hourEntries) {
+        const time = new Date(entry.ts);
+        const item = hourItems.createDiv({ cls: "life-domain-timeline-item" });
+        item.addEventListener("click", (evt) => {
+          evt.stopPropagation();
+          this.selectedTimeTs = entry.ts;
+          this.updateTimeDisplay();
+          this.renderTimeline();
+        });
+        const timeLabel = item.createDiv({ cls: "life-domain-timeline-time" });
+        timeLabel.setText(formatTimeLabel(time));
 
-      const body = item.createDiv({ cls: "life-domain-timeline-body" });
-      body.createEl("div", { text: `${entry.domainName} • ${entry.stateName}` });
-      body.createEl("div", { text: `Score ${entry.score}`, cls: "life-domain-timeline-score" });
-      if (entry.note) {
-        body.createEl("div", { text: entry.note, cls: "life-domain-timeline-note" });
+        const body = item.createDiv({ cls: "life-domain-timeline-body" });
+        body.createEl("div", { text: `${entry.domainName} • ${entry.stateName}` });
+        body.createEl("div", { text: `Score ${entry.score}`, cls: "life-domain-timeline-score" });
+        if (entry.note) {
+          body.createEl("div", { text: entry.note, cls: "life-domain-timeline-note" });
+        }
       }
     }
   }
+
+  private updateTimeDisplay() {
+    if (!this.timeDisplayEl) return;
+    if (!this.selectedTimeTs) {
+      const dateLabel = this.selectedDateKey === getTodayKey() ? "Today" : this.selectedDateKey;
+      this.timeDisplayEl.setText(`${dateLabel} • Current time`);
+      return;
+    }
+    const t = new Date(this.selectedTimeTs);
+    this.selectedDateKey = getDateKeyFromTs(this.selectedTimeTs);
+    if (this.dateInputEl) this.dateInputEl.value = this.selectedDateKey;
+    this.timeDisplayEl.setText(`${this.selectedDateKey} • ${formatTimeLabel(t)}`);
+  }
+
+  private getSelectedLogTs(): number {
+    if (this.selectedTimeTs) return this.selectedTimeTs;
+    const now = new Date();
+    if (this.selectedDateKey === getTodayKey()) return now.getTime();
+    const [y, m, d] = this.selectedDateKey.split("-").map((v) => Number(v));
+    const ts = new Date(y, m - 1, d, now.getHours(), now.getMinutes(), 0, 0);
+    return ts.getTime();
+  }
+}
+
+function formatHourLabel(hour: number): string {
+  const period = hour >= 12 ? "PM" : "AM";
+  const display = hour % 12 === 0 ? 12 : hour % 12;
+  return `${display} ${period}`;
+}
+
+function formatTimeLabel(date: Date): string {
+  const hour = date.getHours();
+  const minute = date.getMinutes().toString().padStart(2, "0");
+  const period = hour >= 12 ? "PM" : "AM";
+  const display = hour % 12 === 0 ? 12 : hour % 12;
+  return `${display}:${minute} ${period}`;
+}
+
+function dateFromKey(dateKey: string): Date {
+  const [y, m, d] = dateKey.split("-").map((v) => Number(v));
+  return new Date(y, m - 1, d);
 }
 
 function getSelectedStateIds(container: HTMLElement | null): string[] {
@@ -410,14 +626,14 @@ function buildDomainSeries(
   plugin: LifeDomainTrackerPlugin,
   domainId: string,
   rangeKey: RangeKey,
-  aggregationOverride: AggregationKey
+  aggregationOverride: AggregationKey,
+  aggregateIndex: DomainAggregateIndex
 ): { labels: string[]; values: number[] } {
   const domain = plugin.settings.domains.find((d) => d.id === domainId);
   if (!domain) return { labels: [], values: [] };
   const points = buildPoints(plugin, rangeKey, (dateKey) => {
-    const logs = plugin.dataStore.logs[dateKey]?.[domainId] ?? [];
     const agg = aggregationOverride === "default" ? domain.aggregationType : aggregationOverride;
-    return aggregateLogs(logs, agg);
+    return aggregateFromIndex(aggregateIndex, dateKey, domainId, agg);
   });
   return {
     labels: points.map((p) => p.date),
@@ -429,7 +645,8 @@ function buildStateSeries(
   plugin: LifeDomainTrackerPlugin,
   domainId: string,
   stateIds: string[],
-  rangeKey: RangeKey
+  rangeKey: RangeKey,
+  metric: "count" | "score"
 ): { labels: string[]; datasets: { label: string; data: number[]; borderColor: string; backgroundColor: string; spanGaps: boolean }[] } {
   const domain = plugin.settings.domains.find((d) => d.id === domainId);
   if (!domain) return { labels: [], datasets: [] };
@@ -437,13 +654,9 @@ function buildStateSeries(
   const states = domain.states.filter((s) => stateIds.includes(s.id));
   if (!states.length) return { labels: [], datasets: [] };
 
+  const stateIndex = buildStateMetricIndex(plugin, domainId, metric);
   const points = buildPoints(plugin, rangeKey, (dateKey) => {
-    const logs = plugin.dataStore.logs[dateKey]?.[domainId] ?? [];
-    const counts = new Map<string, number>();
-    for (const log of logs) {
-      counts.set(log.stateId, (counts.get(log.stateId) ?? 0) + 1);
-    }
-    return counts;
+    return stateIndex.get(dateKey) ?? new Map<string, number>();
   });
 
   const labels = points.map((p) => p.date);
@@ -463,15 +676,15 @@ function buildStateSeries(
 function buildAllDomainsSeries(
   plugin: LifeDomainTrackerPlugin,
   rangeKey: RangeKey,
-  aggregationOverride: AggregationKey
+  aggregationOverride: AggregationKey,
+  aggregateIndex: DomainAggregateIndex
 ): { labels: string[]; datasets: { label: string; data: number[]; borderColor: string; backgroundColor: string; spanGaps: boolean }[] } {
   const domains = plugin.settings.domains;
   const points = buildPoints(plugin, rangeKey, (dateKey) => {
     const perDomain: Record<string, number> = {};
     for (const domain of domains) {
-      const logs = plugin.dataStore.logs[dateKey]?.[domain.id] ?? [];
       const agg = aggregationOverride === "default" ? domain.aggregationType : aggregationOverride;
-      perDomain[domain.id] = aggregateLogs(logs, agg);
+      perDomain[domain.id] = aggregateFromIndex(aggregateIndex, dateKey, domain.id, agg);
     }
     return perDomain;
   });
@@ -550,20 +763,6 @@ function colorForIndex(idx: number): string {
   return palette[idx % palette.length];
 }
 
-function aggregateLogs(
-  logs: { score: number }[],
-  aggregation: "sum" | "average" | "worst"
-): number {
-  if (!logs.length) return 0;
-  if (aggregation === "average") {
-    return logs.reduce((acc, entry) => acc + entry.score, 0) / logs.length;
-  }
-  if (aggregation === "worst") {
-    return Math.min(...logs.map((e) => e.score));
-  }
-  return logs.reduce((acc, entry) => acc + entry.score, 0);
-}
-
 function getSmoothingWindow(rangeKey: RangeKey): number {
   switch (rangeKey) {
     case "7d":
@@ -591,4 +790,89 @@ function applyMovingAverage(values: number[], window: number): number[] {
     result.push(Number(avg.toFixed(3)));
   }
   return result;
+}
+
+function buildDateRange(rangeKey: RangeKey, availableDates: string[]): string[] {
+  const todayKey = getTodayKey();
+  const sorted = availableDates.sort();
+  if (rangeKey === "all") return sorted.length ? sorted : [todayKey];
+
+  const days = parseInt(rangeKey.replace("d", ""), 10);
+  const end = new Date();
+  const dates: string[] = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(end);
+    d.setDate(end.getDate() - i);
+    dates.push(getDateKeyFromTs(d.getTime()));
+  }
+  return dates;
+}
+
+function normalizeValue(value: number, min: number, max: number): number {
+  if (max === min) return 0;
+  return (value - min) / (max - min);
+}
+
+function heatColor(value: number, intensity: number): string {
+  const base = value >= 0 ? [42, 157, 143] : [231, 111, 81];
+  const alpha = 0.15 + intensity * 0.65;
+  return `rgba(${base[0]}, ${base[1]}, ${base[2]}, ${alpha})`;
+}
+
+function buildStateMetricIndex(
+  plugin: LifeDomainTrackerPlugin,
+  domainId: string,
+  metric: "count" | "score"
+): Map<string, Map<string, number>> {
+  const index = new Map<string, Map<string, number>>();
+  for (const [dateKey, domains] of Object.entries(plugin.dataStore.logs)) {
+    const logs = domains[domainId];
+    if (!logs) continue;
+    const map = new Map<string, number>();
+    for (const log of logs) {
+      const inc = metric === "score" ? log.score : 1;
+      map.set(log.stateId, (map.get(log.stateId) ?? 0) + inc);
+    }
+    index.set(dateKey, map);
+  }
+  return index;
+}
+
+type DomainAggregate = { sum: number; count: number; worst: number };
+type DomainAggregateIndex = Map<string, Map<string, DomainAggregate>>;
+
+function buildDomainAggregateIndex(plugin: LifeDomainTrackerPlugin): DomainAggregateIndex {
+  const index: DomainAggregateIndex = new Map();
+  for (const [dateKey, domains] of Object.entries(plugin.dataStore.logs)) {
+    for (const [domainId, logs] of Object.entries(domains)) {
+      let entry = index.get(dateKey);
+      if (!entry) {
+        entry = new Map();
+        index.set(dateKey, entry);
+      }
+      const sum = logs.reduce((acc, l) => acc + l.score, 0);
+      const count = logs.length;
+      const worst = logs.reduce((acc, l) => Math.min(acc, l.score), logs[0]?.score ?? 0);
+      entry.set(domainId, { sum, count, worst });
+    }
+  }
+  return index;
+}
+
+function aggregateFromIndex(
+  index: DomainAggregateIndex,
+  dateKey: string,
+  domainId: string,
+  aggregation: "sum" | "average" | "worst"
+): number {
+  const domainMap = index.get(dateKey);
+  const agg = domainMap?.get(domainId);
+  if (!agg) return 0;
+  if (aggregation === "average") {
+    return agg.count ? agg.sum / agg.count : 0;
+  }
+  if (aggregation === "worst") {
+    return agg.worst;
+  }
+  return agg.sum;
 }

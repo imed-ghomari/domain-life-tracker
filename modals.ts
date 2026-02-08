@@ -152,6 +152,8 @@ export class DeleteLogsModal extends Modal {
   domainSelectEl: HTMLSelectElement | null = null;
   stateSelectEl: HTMLSelectElement | null = null;
   listEl: HTMLElement | null = null;
+  undoBtn: HTMLButtonElement | null = null;
+  lastUndo: { label: string; restore: () => Promise<void> } | null = null;
 
   constructor(app: LifeDomainTrackerPlugin["app"], plugin: LifeDomainTrackerPlugin) {
     super(app);
@@ -163,6 +165,17 @@ export class DeleteLogsModal extends Modal {
     contentEl.empty();
     contentEl.addClass("life-domain-modal");
     contentEl.createEl("h3", { text: "Delete Domain Logs" });
+
+    const undoBar = contentEl.createDiv({ cls: "life-domain-undo-bar" });
+    this.undoBtn = undoBar.createEl("button", { text: "Undo last delete" });
+    this.undoBtn.disabled = true;
+    this.undoBtn.addEventListener("click", async () => {
+      if (!this.lastUndo) return;
+      await this.lastUndo.restore();
+      this.lastUndo = null;
+      if (this.undoBtn) this.undoBtn.disabled = true;
+      this.renderList();
+    });
 
     const dates = Object.keys(this.plugin.dataStore.logs).sort().reverse();
     if (!dates.length) {
@@ -192,7 +205,9 @@ export class DeleteLogsModal extends Modal {
       const dateKey = this.dateSelectEl?.value ?? "";
       const domainId = this.domainSelectEl?.value ?? "";
       const stateId = this.stateSelectEl?.value || undefined;
+      const backup = this.cloneDayLogs(dateKey);
       await this.plugin.deleteLogs(dateKey, domainId, stateId);
+      this.setUndo("Delete filtered logs", dateKey, backup);
       this.renderList();
     });
 
@@ -200,14 +215,18 @@ export class DeleteLogsModal extends Modal {
     deleteDomainBtn.addEventListener("click", async () => {
       const dateKey = this.dateSelectEl?.value ?? "";
       const domainId = this.domainSelectEl?.value ?? "";
+      const backup = this.cloneDayLogs(dateKey);
       await this.plugin.deleteLogs(dateKey, domainId);
+      this.setUndo("Delete all for domain", dateKey, backup);
       this.renderList();
     });
 
     const deleteDayBtn = actions.createEl("button", { text: "Delete All For Day" });
     deleteDayBtn.addEventListener("click", async () => {
       const dateKey = this.dateSelectEl?.value ?? "";
+      const backup = this.cloneDayLogs(dateKey);
       await this.plugin.deleteAllForDate(dateKey);
+      this.setUndo("Delete all for day", dateKey, backup);
       this.onOpen();
     });
 
@@ -256,9 +275,29 @@ export class DeleteLogsModal extends Modal {
       const actions = row.createDiv({ cls: "life-domain-state-actions" });
       const delBtn = actions.createEl("button", { text: "Delete" });
       delBtn.addEventListener("click", async () => {
+        const backup = this.cloneDayLogs(dateKey);
         await this.plugin.deleteLogs(dateKey, domainId, undefined, index);
+        this.setUndo("Delete single log", dateKey, backup);
         this.renderList();
       });
     });
+  }
+
+  private cloneDayLogs(dateKey: string): Record<string, any> | null {
+    const day = this.plugin.dataStore.logs[dateKey];
+    if (!day) return null;
+    return JSON.parse(JSON.stringify(day));
+  }
+
+  private setUndo(label: string, dateKey: string, backup: Record<string, any> | null) {
+    if (!backup) return;
+    this.lastUndo = {
+      label,
+      restore: async () => {
+        this.plugin.dataStore.logs[dateKey] = backup as any;
+        await this.plugin.saveSettings();
+      }
+    };
+    if (this.undoBtn) this.undoBtn.disabled = false;
   }
 }
