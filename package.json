@@ -1,0 +1,18 @@
+{
+  "name": "life-domain-tracker",
+  "version": "0.1.0",
+  "description": "Track daily life domains with state scoring and charts.",
+  "main": "main.js",
+  "scripts": {
+    "build": "esbuild main.ts --bundle --minify --outfile=main.js --external:obsidian --format=cjs --platform=node",
+    "dev": "esbuild main.ts --bundle --outfile=main.js --external:obsidian --format=cjs --platform=node --sourcemap --watch"
+  },
+  "dependencies": {
+    "chart.js": "^4.4.3"
+  },
+  "devDependencies": {
+    "obsidian": "latest",
+    "esbuild": "^0.20.2",
+    "typescript": "^5.5.4"
+  }
+}

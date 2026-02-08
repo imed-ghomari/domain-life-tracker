@@ -1,0 +1,199 @@
+.life-domain-modal h3 {
+  margin-bottom: 0.75rem;
+}
+
+.life-domain-controls,
+.life-domain-chart-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.life-domain-controls label {
+  font-weight: 600;
+}
+
+.life-domain-controls select,
+.life-domain-chart-controls select {
+  min-width: 180px;
+}
+
+.life-domain-settings-header,
+.life-domain-states-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.life-domain-settings-header button,
+.life-domain-states-header button {
+  white-space: nowrap;
+}
+
+.life-domain-state-name-input {
+  min-width: 360px;
+}
+
+.life-domain-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.life-domain-card {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 12px;
+  padding: 0.75rem 0.9rem;
+  background: var(--background-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.life-domain-card-header .setting-item {
+  border-top: 0;
+  padding-top: 0.25rem;
+}
+
+.life-domain-states-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.life-domain-state .setting-item {
+  border-top: 0;
+  padding-top: 0.5rem;
+}
+
+.life-domain-summary {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  padding: 0.75rem;
+  margin-bottom: 0.75rem;
+  background: var(--background-secondary);
+}
+
+.life-domain-summary-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  font-weight: 600;
+}
+
+.life-domain-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.5rem;
+}
+
+.life-domain-chip {
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 999px;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.8rem;
+}
+
+.life-domain-chip-missing {
+  border-color: var(--text-accent);
+}
+
+.life-domain-note {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-bottom: 0.75rem;
+}
+
+.life-domain-note textarea {
+  width: 100%;
+  resize: vertical;
+}
+
+.life-domain-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-height: 55vh;
+  overflow: auto;
+  padding-right: 0.25rem;
+}
+
+.life-domain-state-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  padding: 0.65rem 0.75rem;
+  background: var(--background-primary);
+}
+
+.life-domain-state-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.life-domain-badges {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.life-domain-badge {
+  font-size: 0.75rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+}
+
+.life-domain-state-actions button {
+  min-width: 64px;
+}
+
+.life-domain-good {
+  border-left: 4px solid var(--text-accent);
+}
+
+.life-domain-bad {
+  border-left: 4px solid var(--text-error);
+}
+
+.life-domain-state-picker {
+  margin: 0.5rem 0 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-secondary);
+}
+
+.life-domain-state-picker-title {
+  font-weight: 600;
+  margin-bottom: 0.35rem;
+}
+
+.life-domain-state-picker-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+}
+
+.life-domain-smoothing {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.life-domain-state-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.9rem;
+}

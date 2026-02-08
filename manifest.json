@@ -1,0 +1,10 @@
+{
+  "id": "life-domain-tracker",
+  "name": "Life Domain Tracker",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "Track daily life domains with states and visualize performance.",
+  "author": "Your Name",
+  "authorUrl": "",
+  "isDesktopOnly": false
+}
