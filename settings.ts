@@ -23,6 +23,19 @@ export class LifeDomainSettingsTab extends PluginSettingTab {
       this.display();
     });
 
+    new Setting(containerEl)
+      .setName("Log UI Mode")
+      .setDesc("Choose between the classic modal or the timeline tab.")
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOptions({ modal: "Modal", tab: "Timeline Tab" })
+          .setValue(this.plugin.settings.logUiMode ?? "modal")
+          .onChange(async (value: "modal" | "tab") => {
+            this.plugin.settings.logUiMode = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
     this.plugin.settings.domains.forEach((domain, domainIndex) => {
       const domainContainer = containerEl.createDiv({ cls: "life-domain-block" });
       const domainCard = domainContainer.createDiv({ cls: "life-domain-card" });

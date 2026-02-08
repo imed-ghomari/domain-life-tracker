@@ -3,9 +3,11 @@ import { Chart } from "chart.js/auto";
 import LifeDomainTrackerPlugin, { getTodayKey } from "./main";
 
 export const VIEW_TYPE_DOMAIN_PERFORMANCE = "life-domain-performance";
+export const VIEW_TYPE_LOG_TIMELINE = "life-domain-log-timeline";
 
 type RangeKey = "7d" | "30d" | "90d" | "365d" | "all";
 type ViewKey = "domain" | "states" | "all-domains";
+type AggregationKey = "default" | "sum" | "average" | "worst";
 
 export class DomainPerformanceView extends ItemView {
   plugin: LifeDomainTrackerPlugin;
@@ -14,12 +16,14 @@ export class DomainPerformanceView extends ItemView {
   rangeKey: RangeKey = "30d";
   viewKey: ViewKey = "domain";
   smoothingEnabled = false;
+  aggregationOverride: AggregationKey = "default";
   domainSelectEl: HTMLSelectElement | null = null;
   rangeSelectEl: HTMLSelectElement | null = null;
   viewSelectEl: HTMLSelectElement | null = null;
   statePickerEl: HTMLElement | null = null;
   canvasEl: HTMLCanvasElement | null = null;
   smoothingToggleEl: HTMLInputElement | null = null;
+  aggregationSelectEl: HTMLSelectElement | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: LifeDomainTrackerPlugin) {
     super(leaf);
@@ -50,6 +54,7 @@ export class DomainPerformanceView extends ItemView {
     this.viewSelectEl = controls.createEl("select");
     this.domainSelectEl = controls.createEl("select");
     this.rangeSelectEl = controls.createEl("select");
+    this.aggregationSelectEl = controls.createEl("select");
     const smoothingWrap = controls.createEl("label", { cls: "life-domain-smoothing" });
     this.smoothingToggleEl = smoothingWrap.createEl("input");
     this.smoothingToggleEl.type = "checkbox";
@@ -80,6 +85,16 @@ export class DomainPerformanceView extends ItemView {
     }
     this.rangeSelectEl.value = this.rangeKey;
 
+    const aggs: { key: AggregationKey; label: string }[] = [
+      { key: "default", label: "Use domain default" },
+      { key: "sum", label: "Sum" },
+      { key: "average", label: "Average" },
+      { key: "worst", label: "Worst Case" }
+    ];
+    for (const agg of aggs) {
+      this.aggregationSelectEl.createEl("option", { text: agg.label, value: agg.key });
+    }
+
     this.statePickerEl = contentEl.createDiv({ cls: "life-domain-state-picker" });
     this.canvasEl = contentEl.createEl("canvas");
     this.domainId = domains[0].id;
@@ -96,6 +111,10 @@ export class DomainPerformanceView extends ItemView {
     });
     this.rangeSelectEl.addEventListener("change", () => {
       this.rangeKey = (this.rangeSelectEl?.value as RangeKey) ?? "30d";
+      if (this.canvasEl) this.renderChart(this.canvasEl);
+    });
+    this.aggregationSelectEl.addEventListener("change", () => {
+      this.aggregationOverride = (this.aggregationSelectEl?.value as AggregationKey) ?? "default";
       if (this.canvasEl) this.renderChart(this.canvasEl);
     });
     this.smoothingToggleEl.addEventListener("change", () => {
@@ -120,6 +139,9 @@ export class DomainPerformanceView extends ItemView {
 
     if (this.domainSelectEl) {
       this.domainSelectEl.disabled = this.viewKey === "all-domains";
+    }
+    if (this.aggregationSelectEl) {
+      this.aggregationSelectEl.disabled = this.viewKey === "states";
     }
 
     if (this.viewKey !== "states") return;
@@ -161,7 +183,12 @@ export class DomainPerformanceView extends ItemView {
     };
 
     if (this.viewKey === "domain") {
-      const series = buildDomainSeries(this.plugin, this.domainId, this.rangeKey);
+      const series = buildDomainSeries(
+        this.plugin,
+        this.domainId,
+        this.rangeKey,
+        this.aggregationOverride
+      );
       chartData = {
         labels: series.labels,
         datasets: [
@@ -182,7 +209,7 @@ export class DomainPerformanceView extends ItemView {
         datasets: series.datasets
       };
     } else {
-      const series = buildAllDomainsSeries(this.plugin, this.rangeKey);
+      const series = buildAllDomainsSeries(this.plugin, this.rangeKey, this.aggregationOverride);
       chartData = {
         labels: series.labels,
         datasets: series.datasets
@@ -227,6 +254,152 @@ export class DomainPerformanceView extends ItemView {
   }
 }
 
+export class LogTimelineView extends ItemView {
+  plugin: LifeDomainTrackerPlugin;
+  timelineEl: HTMLElement | null = null;
+  statesEl: HTMLElement | null = null;
+  noteInputEl: HTMLTextAreaElement | null = null;
+
+  constructor(leaf: WorkspaceLeaf, plugin: LifeDomainTrackerPlugin) {
+    super(leaf);
+    this.plugin = plugin;
+  }
+
+  getViewType(): string {
+    return VIEW_TYPE_LOG_TIMELINE;
+  }
+
+  getDisplayText(): string {
+    return "Life Domain Log";
+  }
+
+  async onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.addClass("life-domain-modal");
+
+    contentEl.createEl("h3", { text: "Log Domain State" });
+
+    const layout = contentEl.createDiv({ cls: "life-domain-log-layout" });
+    const timelinePanel = layout.createDiv({ cls: "life-domain-log-timeline" });
+    const statesPanel = layout.createDiv({ cls: "life-domain-log-states" });
+
+    timelinePanel.createEl("h4", { text: "Today's timeline" });
+    this.timelineEl = timelinePanel.createDiv({ cls: "life-domain-timeline-list" });
+
+    const noteWrap = statesPanel.createDiv({ cls: "life-domain-note" });
+    noteWrap.createEl("label", { text: "Contextual note (optional)" });
+    this.noteInputEl = noteWrap.createEl("textarea");
+    this.noteInputEl.setAttr("rows", "2");
+    this.noteInputEl.setAttr("placeholder", "Add a short note for this log...");
+
+    statesPanel.createEl("h4", { text: "States" });
+    this.statesEl = statesPanel.createDiv({ cls: "life-domain-list" });
+
+    this.renderStates();
+    this.renderTimeline();
+  }
+
+  onClose() {
+    // nothing to cleanup
+  }
+
+  private renderStates() {
+    if (!this.statesEl) return;
+    this.statesEl.empty();
+    const domains = this.plugin.settings.domains;
+    if (!domains.length) {
+      this.statesEl.createEl("p", { text: "No domains configured. Add domains in settings." });
+      return;
+    }
+
+    for (const domain of domains) {
+      const domainBlock = this.statesEl.createDiv({ cls: "life-domain-group" });
+      domainBlock.createEl("div", { text: domain.name || "Unnamed domain", cls: "life-domain-group-title" });
+
+      for (const state of domain.states) {
+        const row = domainBlock.createDiv({ cls: "life-domain-state-row" });
+        const meta = row.createDiv({ cls: "life-domain-state-meta" });
+        meta.createEl("div", { text: state.name || "Unnamed state" });
+        const badges = meta.createDiv({ cls: "life-domain-badges" });
+        const kindBadge = badges.createEl("span", { cls: "life-domain-badge" });
+        kindBadge.textContent = state.score > 0 ? "GOOD" : state.score < 0 ? "BAD" : "NEUTRAL";
+        badges.createEl("span", { text: `Score ${state.score}`, cls: "life-domain-badge" });
+
+        const actions = row.createDiv({ cls: "life-domain-state-actions" });
+        const btn = actions.createEl("button", { text: "Log" });
+        btn.addEventListener("click", () => {
+          const note = this.noteInputEl?.value ?? "";
+          this.plugin.addLog(domain.id, state.id, note);
+          if (this.noteInputEl) this.noteInputEl.value = "";
+          this.renderTimeline();
+        });
+
+        if (state.score > 0) row.classList.add("life-domain-good");
+        if (state.score < 0) row.classList.add("life-domain-bad");
+      }
+    }
+  }
+
+  private renderTimeline() {
+    if (!this.timelineEl) return;
+    this.timelineEl.empty();
+
+    const dateKey = getTodayKey();
+    const dayLogs = this.plugin.dataStore.logs[dateKey];
+    if (!dayLogs) {
+      this.timelineEl.createEl("p", { text: "No logs for today yet." });
+      return;
+    }
+
+    const entries: {
+      ts: number;
+      domainName: string;
+      stateName: string;
+      score: number;
+      note?: string;
+    }[] = [];
+
+    for (const domain of this.plugin.settings.domains) {
+      const logs = dayLogs[domain.id] ?? [];
+      for (const entry of logs) {
+        const state = domain.states.find((s) => s.id === entry.stateId);
+        entries.push({
+          ts: entry.ts,
+          domainName: domain.name || "Unnamed domain",
+          stateName: state?.name || "Unknown state",
+          score: entry.score,
+          note: entry.note
+        });
+      }
+    }
+
+    entries.sort((a, b) => a.ts - b.ts);
+
+    let lastHour: number | null = null;
+    for (const entry of entries) {
+      const time = new Date(entry.ts);
+      const hour = time.getHours();
+      if (lastHour !== hour) {
+        const hourLabel = this.timelineEl.createDiv({ cls: "life-domain-timeline-hour" });
+        hourLabel.setText(`${hour.toString().padStart(2, "0")}:00`);
+        lastHour = hour;
+      }
+
+      const item = this.timelineEl.createDiv({ cls: "life-domain-timeline-item" });
+      const timeLabel = item.createDiv({ cls: "life-domain-timeline-time" });
+      timeLabel.setText(`${time.getHours().toString().padStart(2, "0")}:${time.getMinutes().toString().padStart(2, "0")}`);
+
+      const body = item.createDiv({ cls: "life-domain-timeline-body" });
+      body.createEl("div", { text: `${entry.domainName} • ${entry.stateName}` });
+      body.createEl("div", { text: `Score ${entry.score}`, cls: "life-domain-timeline-score" });
+      if (entry.note) {
+        body.createEl("div", { text: entry.note, cls: "life-domain-timeline-note" });
+      }
+    }
+  }
+}
+
 function getSelectedStateIds(container: HTMLElement | null): string[] {
   if (!container) return [];
   const inputs = Array.from(container.querySelectorAll<HTMLInputElement>("input[type='checkbox']"));
@@ -236,13 +409,15 @@ function getSelectedStateIds(container: HTMLElement | null): string[] {
 function buildDomainSeries(
   plugin: LifeDomainTrackerPlugin,
   domainId: string,
-  rangeKey: RangeKey
+  rangeKey: RangeKey,
+  aggregationOverride: AggregationKey
 ): { labels: string[]; values: number[] } {
   const domain = plugin.settings.domains.find((d) => d.id === domainId);
   if (!domain) return { labels: [], values: [] };
   const points = buildPoints(plugin, rangeKey, (dateKey) => {
     const logs = plugin.dataStore.logs[dateKey]?.[domainId] ?? [];
-    return aggregateLogs(logs, domain.aggregationType);
+    const agg = aggregationOverride === "default" ? domain.aggregationType : aggregationOverride;
+    return aggregateLogs(logs, agg);
   });
   return {
     labels: points.map((p) => p.date),
@@ -287,14 +462,16 @@ function buildStateSeries(
 
 function buildAllDomainsSeries(
   plugin: LifeDomainTrackerPlugin,
-  rangeKey: RangeKey
+  rangeKey: RangeKey,
+  aggregationOverride: AggregationKey
 ): { labels: string[]; datasets: { label: string; data: number[]; borderColor: string; backgroundColor: string; spanGaps: boolean }[] } {
   const domains = plugin.settings.domains;
   const points = buildPoints(plugin, rangeKey, (dateKey) => {
     const perDomain: Record<string, number> = {};
     for (const domain of domains) {
       const logs = plugin.dataStore.logs[dateKey]?.[domain.id] ?? [];
-      perDomain[domain.id] = aggregateLogs(logs, domain.aggregationType);
+      const agg = aggregationOverride === "default" ? domain.aggregationType : aggregationOverride;
+      perDomain[domain.id] = aggregateLogs(logs, agg);
     }
     return perDomain;
   });

@@ -1,7 +1,12 @@
 import { Notice, Plugin, normalizePath } from "obsidian";
 import { LifeDomainSettingsTab } from "./settings";
 import { LogDomainModal, DeleteLogsModal } from "./modals";
-import { DomainPerformanceView, VIEW_TYPE_DOMAIN_PERFORMANCE } from "./view";
+import {
+  DomainPerformanceView,
+  LogTimelineView,
+  VIEW_TYPE_DOMAIN_PERFORMANCE,
+  VIEW_TYPE_LOG_TIMELINE
+} from "./view";
 
 export interface LifeDomainState {
   id: string;
@@ -18,6 +23,7 @@ export interface LifeDomain {
 
 export interface LifeDomainSettings {
   domains: LifeDomain[];
+  logUiMode: "modal" | "tab";
 }
 
 export interface DomainLogEntry {
@@ -37,7 +43,8 @@ interface LifeDomainStorage {
 }
 
 export const DEFAULT_SETTINGS: LifeDomainSettings = {
-  domains: []
+  domains: [],
+  logUiMode: "modal"
 };
 
 const DEFAULT_DATA: LifeDomainDataStore = {
@@ -54,11 +61,12 @@ export default class LifeDomainTrackerPlugin extends Plugin {
     this.addSettingTab(new LifeDomainSettingsTab(this.app, this));
 
     this.registerView(VIEW_TYPE_DOMAIN_PERFORMANCE, (leaf) => new DomainPerformanceView(leaf, this));
+    this.registerView(VIEW_TYPE_LOG_TIMELINE, (leaf) => new LogTimelineView(leaf, this));
 
     this.addCommand({
       id: "log-domain-state",
       name: "Log Domain State",
-      callback: () => new LogDomainModal(this.app, this).open()
+      callback: () => this.openLogUi()
     });
 
     this.addCommand({
@@ -192,6 +200,16 @@ export default class LifeDomainTrackerPlugin extends Plugin {
     const leaf = this.app.workspace.getLeaf("tab");
     await leaf.setViewState({ type: VIEW_TYPE_DOMAIN_PERFORMANCE, active: true });
     this.app.workspace.revealLeaf(leaf);
+  }
+
+  async openLogUi() {
+    if (this.settings.logUiMode === "tab") {
+      const leaf = this.app.workspace.getLeaf("tab");
+      await leaf.setViewState({ type: VIEW_TYPE_LOG_TIMELINE, active: true });
+      this.app.workspace.revealLeaf(leaf);
+    } else {
+      new LogDomainModal(this.app, this).open();
+    }
   }
 
   async deleteLogs(
